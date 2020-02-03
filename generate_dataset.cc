@@ -4,21 +4,17 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <random>
-
-void AddRandom(cv::Mat &sour, cv::Mat &mask) {
+uchar sature_func(size_t v) {
+    return v > 255 ? 255 : v;
+}
+void AddRandom(cv::Mat &sour, cv::Mat &mask, size_t channel, size_t offset) {
   size_t rows = sour.rows;
   size_t cols = sour.cols;
-  std::default_random_engine engine;
-  std::uniform_int_distribution<int> dis(0, 15);
-  auto rand = std::bind(dis, engine);
-  size_t offset = rand();
   for (size_t row = 0; row < rows; row++) {
     for (size_t col = 0; col < cols; col++) {
       if (mask.at<uchar>(row, col) > 0) {
         uchar *p = sour.ptr<uchar>(row);
-        // p[col * 3] = (p[col * 3] + offset) % 255;
-        // p[col * 3 + 1] = (p[col * 3 + 1] + offset) % 255;
-        // p[col * 3 + 2] = (p[col * 3 + 2] + offset) % 255;
+        p[col * 3 + channel] = sature_func(p[col * 3 + channel] + offset);
       }
     }
   }
@@ -36,8 +32,8 @@ void MaskImage(cv::Mat &sour, cv::Mat &mask) {
   }
 }
 std::vector<cv::Mat> CreateMask(size_t width, size_t height, size_t num) {
-  size_t overlay_window = 50;
-  size_t half_overlay_window = 25;
+  size_t overlay_window = 100;
+  size_t half_overlay_window = 50;
   size_t image_window = width / num;
   std::vector<cv::Mat> res;
 
@@ -86,7 +82,19 @@ int main(int argc, char **argv) {
     cv::Mat mask = masks[i];
     MaskImage(clone_img, mask);
     if (i != 0) {
-      AddRandom(clone_img, mask);
+    std::default_random_engine engine;
+    std::uniform_int_distribution<int> dis(0, 15);
+    auto rand = std::bind(dis, engine);
+      if (i == 1 || i == 2) {
+      AddRandom(clone_img, mask, 2, rand());
+      }
+      if (i == 3 || i == 4) {
+
+        AddRandom(clone_img, mask, 1, rand());
+      }
+      if (i == 5) {
+          AddRandom(clone_img,mask,0, rand());
+      }
     }
     cv::imwrite("origin_" + std::to_string(i) + ".jpg", clone_img);
     cv::imwrite("mask_" + std::to_string(i) + ".jpg", mask);

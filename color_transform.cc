@@ -11,15 +11,53 @@ void ColorTransform::process() {
     std::cerr << "Have not set the interface " << std::endl;
     return;
   }
+  auto index_vector = _interface->GetIndex();
   _node_size = _interface->GetIndex().size();
   _fixed_image_size = _interface->GetFixedIndex().size();
-
+  for (size_t i = 0; i < _node_size; i++) {
+    _id_to_idx[index_vector[i]] = i;
+  }
   GenerateQuadriticFormula();
   GenerateSoftLimitedFormula();
+  GenerateHardLimitedFormula();
   GenerateFixedFormula();
+  GenerateSplineFormula();
   // MergeEqualFormula();
   Solve();
   // post process
+
+  auto linear_functor = [](double v) { return v; };
+  for (size_t img_id : index_vector) {
+    size_t index = _id_to_idx[img_id];
+    auto r_functor = [this, &index](double v) {
+      if (v < 0) v = 0;
+      if (v > 1.0) v = 1.0;
+      Eigen::VectorXd coeffcient = this->f_coefficient(v);
+      Eigen::VectorXd param = this->_r_params.block<15, 1>(index * 15, 0);
+      double value = param.dot(coeffcient);
+      std::cout << index << " R : " << v << " map to " << value << std::endl;
+      return value;
+    };
+    auto g_functor = [this, &index](double v) {
+      if (v < 0) v = 0;
+      if (v > 1.0) v = 1.0;
+      Eigen::VectorXd coeffcient = this->f_coefficient(v);
+      Eigen::VectorXd param = this->_g_params.block<15, 1>(index * 15, 0);
+      double value = param.dot(coeffcient);
+      std::cout << index << " G : " << v << " map to " << value << std::endl;
+      return value;
+    };
+    auto b_functor = [this, &index](double v) {
+      if (v < 0) v = 0;
+      if (v > 1.0) v = 1.0;
+      Eigen::VectorXd coeffcient = this->f_coefficient(v);
+      Eigen::VectorXd param = this->_b_params.block<15, 1>(index * 15, 0);
+      double value = param.dot(coeffcient);
+      std::cout << index << " B : " << v << " map to " << value << std::endl;
+      return value;
+    };
+    _interface->ApplyTransform(index, r_functor, g_functor, b_functor);
+  }
 }
 void ColorTransform::GenerateQuadriticFormula() {
   std::map<size_t, size_t> id_map_idx;
@@ -80,11 +118,44 @@ void ColorTransform::GenerateSoftLimitedFormula() {
     for (size_t i = 0; i < 256; i++) {
       double v = static_cast<double>(i) / 255.0;
       p.block<1, 15>(node_index * 256 + i, 15 * node_index) = f_coefficient(v);
-      q(node_index * 256 + i) = v;
+      q(node_index * 256 + i) = -2.0 * v;
     }
   }
   _range_quadratic_matrix = p.transpose() * p;
   _range_linear_vector = q.transpose() * p;
+}
+
+void ColorTransform::GenerateHardLimitedFormula() {
+  _nonequal_formula_matrix = Eigen::MatrixXd::Zero(
+      11 * (_node_size - _fixed_image_size), 15 * _node_size);
+  _nonequal_formula_constant =
+      Eigen::VectorXd::Zero(11 * (_node_size - _fixed_image_size));
+  auto image_ids = _interface->GetIndex();
+  auto fixed_image_ids = _interface->GetFixedIndex();
+  std::set<size_t> fixed_image_ids_set;
+  for (size_t id : fixed_image_ids) {
+    fixed_image_ids_set.insert(id);
+  }
+  size_t count = 0;
+  for (size_t id : image_ids) {
+    if (fixed_image_ids_set.find(id) == fixed_image_ids_set.end()) {
+      size_t index = _id_to_idx[id];
+      for (size_t j = 0; j < 5; j++) {
+        _nonequal_formula_matrix.block<1, 15>(count * 11 + j * 2 + 0,
+                                              15 * index) =
+            f_jacobian_coefficient(0.2 * j + 0.1);
+        _nonequal_formula_constant(count * 11 + j * 2 + 0) = -5.0;
+        _nonequal_formula_matrix.block<1, 15>(count * 11 + j * 2 + 1,
+                                              15 * index) =
+            -f_jacobian_coefficient(0.2 * j + 0.1);
+        _nonequal_formula_constant(count * 11 + j * 2 + 1) = 0.2;
+      }
+      _nonequal_formula_matrix.block<1, 15>(count * 11 + 10, 15 * index) =
+          -f_coefficient(0.0);
+      _nonequal_formula_constant(count * 11 + 10, 0) = 0.0;
+      count++;
+    }
+  }
 }
 void ColorTransform::GenerateFixedFormula() {
   std::vector<size_t> index_vec = _interface->GetIndex();
@@ -113,6 +184,45 @@ void ColorTransform::GenerateFixedFormula() {
   }
 }
 
+void ColorTransform::GenerateSplineFormula() {
+  std::cout << "GenerateSplineformula" << std::endl;
+  _spline_equal_matrix = Eigen::MatrixXd::Zero(
+      8 * (_node_size - _fixed_image_size), 15 * _node_size);
+  _spline_equal_constant =
+      Eigen::VectorXd::Zero(8 * (_node_size - _fixed_image_size));
+  auto image_ids = _interface->GetIndex();
+  auto fixed_image_ids = _interface->GetFixedIndex();
+  std::set<size_t> fixed_image_ids_set;
+  for (size_t id : fixed_image_ids) {
+    fixed_image_ids_set.insert(id);
+  }
+  size_t count = 0;
+  for (size_t id : image_ids) {
+    if (fixed_image_ids_set.find(id) == fixed_image_ids_set.end()) {
+      size_t index = _id_to_idx[id];
+      for (size_t j = 0; j < 4; j++) {
+        _spline_equal_matrix(count * 8 + j * 2 + 0, index * 15 + j * 3 + 0) =
+            1.0;
+        _spline_equal_matrix(count * 8 + j * 2 + 0, index * 15 + j * 3 + 1) =
+            0.2;
+        _spline_equal_matrix(count * 8 + j * 2 + 0, index * 15 + j * 3 + 2) =
+            0.04;
+        _spline_equal_matrix(count * 8 + j * 2 + 0, index * 15 + j * 3 + 3) =
+            -1.0;
+
+        _spline_equal_matrix(count * 8 + j * 2 + 1, index * 15 + j * 3 + 1) =
+            1.0;
+        _spline_equal_matrix(count * 8 + j * 2 + 1, index * 15 + j * 3 + 2) =
+            0.4;
+        _spline_equal_matrix(count * 8 + j * 2 + 1, index * 15 + j * 3 + 4) =
+            -1.0;
+      }
+      count++;
+    }
+  }
+  std::cout << "GenerateSplineformula Done" << std::endl;
+}
+
 void ColorTransform::Solve() {
   std::cout << _r_quadratic_matrix << std::endl;
   const size_t ROW = _r_quadratic_matrix.rows();
@@ -130,41 +240,114 @@ void ColorTransform::Solve() {
                                          0.5 * _range_quadratic_matrix);
   std::cout << "The eigenvalues of _r_quadratic_matrix : " << es.eigenvalues()
             << std::endl;
-
-  MinimumQuadraticProgram();
+  _r_params = Eigen::VectorXd::Zero(15 * _node_size);
+  bool res = MinimumQuadraticProgram(_r_quadratic_matrix, _r_params);
+  if (!res) {
+    std::cerr << "Quadratic Problem Can not be Solved." << std::endl;
+    exit(1);
+  } else {
+    std::cout << "R X : ";
+    for (size_t i = 0; i < 15; i++) {
+      std::cout << _r_params(i, 0) << " ";
+    }
+    std::cout << std::endl;
+    for (size_t i = 15; i < 30; i++) {
+      std::cout << _r_params(i, 0) << " ";
+    }
+    std::cout << std::endl;
+  }
+  _g_params = Eigen::VectorXd::Zero(15 * _node_size);
+  res &= MinimumQuadraticProgram(_g_quadratic_matrix, _g_params);
+  if (!res) {
+    std::cerr << "Quadratic Problem Can not be Solved." << std::endl;
+    exit(1);
+  } else {
+    std::cout << "G X : ";
+    for (size_t i = 0; i < 15; i++) {
+      std::cout << _r_params(i, 0) << " ";
+    }
+    std::cout << std::endl;
+    for (size_t i = 15; i < 30; i++) {
+      std::cout << _r_params(i, 0) << " ";
+    }
+    std::cout << std::endl;
+  }
+  _b_params = Eigen::VectorXd::Zero(15 * _node_size);
+  res &= MinimumQuadraticProgram(_b_quadratic_matrix, _b_params);
+  if (!res) {
+    std::cerr << "Quadratic Problem Can not be Solved." << std::endl;
+    exit(1);
+  } else {
+    std::cout << "G X : ";
+    for (size_t i = 0; i < 15; i++) {
+      std::cout << _r_params(i, 0) << " ";
+    }
+    std::cout << std::endl;
+    for (size_t i = 15; i < 30; i++) {
+      std::cout << _r_params(i, 0) << " ";
+    }
+    std::cout << std::endl;
+  }
 }
-bool ColorTransform::MinimumQuadraticProgram() {
-  quadprogpp::Matrix<double> Q =
-      EigenMatrixToQuadProgMatrix(this->_range_quadratic_matrix);
+bool ColorTransform::MinimumQuadraticProgram(
+    const Eigen::Ref<const Eigen::MatrixXd> &quadratic_matrix,
+    Eigen::Ref<Eigen::VectorXd> solution_param) {
+  Eigen::MatrixXd QQ = quadratic_matrix + 0.03 * this->_range_quadratic_matrix;
+  quadprogpp::Matrix<double> Q = EigenMatrixToQuadProgMatrix(QQ);
   quadprogpp::Vector<double> g =
       EigenVectorToQuadProgVector(this->_range_linear_vector);
+  std::cout << "concat mat" << std::endl;
+  std::cout << "_equal_formula_matrix : " << _equal_formula_matrix.rows() << " "
+            << _equal_formula_matrix.cols() << std::endl;
+  std::cout << "_spline_equal_matrix : " << _spline_equal_matrix.rows() << " "
+            << _spline_equal_matrix.cols() << std::endl;
+  Eigen::MatrixXd temp_equal_matrix(
+      _equal_formula_matrix.rows() + _spline_equal_matrix.rows(),
+      15 * _node_size);
+  temp_equal_matrix << _equal_formula_matrix, _spline_equal_matrix;
+  Eigen::VectorXd temp_equal_constant(_equal_formula_constant.rows() +
+                                      _spline_equal_constant.rows());
 
+  temp_equal_constant << _equal_formula_constant, _spline_equal_constant;
   quadprogpp::Matrix<double> CE =
-      EigenMatrixToQuadProgMatrix(_equal_formula_matrix);
-  quadprogpp::Vector<double> ce0 =
-      EigenVectorToQuadProgVector(_equal_formula_constant);
+      EigenMatrixToQuadProgMatrix(temp_equal_matrix);
 
-  quadprogpp::Matrix<double> CI;
-  CI.resize(15 * _node_size, 0);
-  quadprogpp::Vector<double> ci0;
-  ci0.resize(0);
+  quadprogpp::Vector<double> ce0 =
+      EigenVectorToQuadProgVector(temp_equal_constant);
+  quadprogpp::Matrix<double> CI =
+      EigenMatrixToQuadProgMatrix(_nonequal_formula_matrix);
+  // CI.resize(15 * _node_size, 0);
+  quadprogpp::Vector<double> ci0 =
+      EigenVectorToQuadProgVector(_nonequal_formula_constant);
+  // ci0.resize(0);
+
   quadprogpp::Vector<double> x;
   x.resize(15 * _node_size);
   double error = quadprogpp::solve_quadprog(Q, g, CE, ce0, CI, ci0, x);
-
   std::cout << "Error : " << error << std::endl;
-  std::cout << "X : ";
-  for (size_t i = 0; i < 15; i++) {
-    std::cout << x[i] << " ";
+  if (error == INFINITY) {
+    return false;
   }
-  std::cout << std::endl;
-  return false;
+  Eigen::VectorXd params = Eigen::VectorXd::Zero(15 * _node_size);
+  std::cout << "solution : " << solution_param.rows() << " X "
+            << solution_param.cols() << std::endl;
+  for (size_t i = 0; i < 15 * _node_size; i++) {
+    params(i, 0) = x[i];
+    solution_param(i, 0) = x[i];
+  }
+  // solution_param = params;
+  return true;
 }
+
 quadprogpp::Matrix<double> ColorTransform::EigenMatrixToQuadProgMatrix(
     const Eigen::Ref<const Eigen::MatrixXd> &matrix) {
   size_t ROW = matrix.rows();
   size_t COL = matrix.cols();
   quadprogpp::Matrix<double> res;
+  if (COL == 0) {
+    std::cerr << "Eigen Matrix's column equal to zero " << __FILE__ << " "
+              << __LINE__ << std::endl;
+  }
   if (ROW == 0) {
     res.resize(COL, 0);
     return res;
@@ -206,6 +389,7 @@ Eigen::VectorXd ColorTransform::f_coefficient(double v) {
   if (v > 1.0) {
     std::cerr << "Waring: f_coefficient recvive a value more then One"
               << std::endl;
+    return res;
   }
 
   int index = static_cast<int>(v / 0.2);
@@ -215,5 +399,24 @@ Eigen::VectorXd ColorTransform::f_coefficient(double v) {
   res(index * 3, 0) = 1.0;
   res(index * 3 + 1, 0) = v - 0.2 * index;
   res(index * 3 + 2, 0) = (v - 0.2 * index) * (v - 0.2 * index);
+  return res;
+}
+Eigen::VectorXd ColorTransform::f_jacobian_coefficient(double v) {
+  Eigen::VectorXd res = Eigen::VectorXd::Zero(15);
+  if (v < 0.0) {
+    std::cerr << "Waring: f_jacobian_coefficient recvive a value less then Zero"
+              << std::endl;
+    return res;
+  }
+  if (v > 1.0) {
+    std::cerr << "Waring: f_coefficient recvive a value more then One"
+              << std::endl;
+    return res;
+  }
+
+  int index = static_cast<int>(v / 0.2);
+  index = index > 4 ? 4 : index;
+  res(index * 3 + 1, 0) = 1.0;
+  res(index * 3 + 2, 0) = 2 * (v - 0.2 * index);
   return res;
 }

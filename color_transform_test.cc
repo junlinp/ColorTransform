@@ -6,5 +6,6 @@ int main(int argc, char** argv) {
   ColorTransform color_transform;
   color_transform.setInterface(&file_interface);
   color_transform.process();
+  file_interface.MergeImage();
   return 0;
 }

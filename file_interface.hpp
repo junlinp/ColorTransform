@@ -15,6 +15,12 @@ class FileInterface : public interface {
       std::tuple<double, double, double, double, double, double>>
   GetPixelPair(size_t lhs_index, size_t rhs_index) override;
 
+  virtual void ApplyTransform(
+      size_t index, std::function<double(double)> r_transform_functor,
+      std::function<double(double)> g_transform_functor,
+      std::function<double(double)> b_transform_functor) override;
+  void MergeImage();
+
  private:
   std::vector<cv::Mat> _imgs;
   std::vector<cv::Mat> _masks;
