@@ -127,9 +127,9 @@ void ColorTransform::GenerateSoftLimitedFormula() {
 
 void ColorTransform::GenerateHardLimitedFormula() {
   _nonequal_formula_matrix = Eigen::MatrixXd::Zero(
-      11 * (_node_size - _fixed_image_size), 15 * _node_size);
+      10 * (_node_size - _fixed_image_size), 15 * _node_size);
   _nonequal_formula_constant =
-      Eigen::VectorXd::Zero(11 * (_node_size - _fixed_image_size));
+      Eigen::VectorXd::Zero(10 * (_node_size - _fixed_image_size));
   auto image_ids = _interface->GetIndex();
   auto fixed_image_ids = _interface->GetFixedIndex();
   std::set<size_t> fixed_image_ids_set;
@@ -141,21 +141,28 @@ void ColorTransform::GenerateHardLimitedFormula() {
     if (fixed_image_ids_set.find(id) == fixed_image_ids_set.end()) {
       size_t index = _id_to_idx[id];
       for (size_t j = 0; j < 5; j++) {
-        _nonequal_formula_matrix.block<1, 15>(count * 11 + j * 2 + 0,
+        _nonequal_formula_matrix.block<1, 15>(count * 10 + j * 2 + 0,
                                               15 * index) =
-            f_jacobian_coefficient(0.2 * j + 0.1);
-        _nonequal_formula_constant(count * 11 + j * 2 + 0) = -5.0;
-        _nonequal_formula_matrix.block<1, 15>(count * 11 + j * 2 + 1,
+            f_jacobian_coefficient(0.2 * j + 0.1).transpose();
+        _nonequal_formula_constant(count * 10 + j * 2 + 0) = -0.2;
+        _nonequal_formula_matrix.block<1, 15>(count * 10 + j * 2 + 1,
                                               15 * index) =
-            -f_jacobian_coefficient(0.2 * j + 0.1);
-        _nonequal_formula_constant(count * 11 + j * 2 + 1) = 0.2;
+            -f_jacobian_coefficient(0.2 * j + 0.1).transpose();
+        _nonequal_formula_constant(count * 10 + j * 2 + 1) = 5.0;
       }
-      _nonequal_formula_matrix.block<1, 15>(count * 11 + 10, 15 * index) =
-          -f_coefficient(0.0);
-      _nonequal_formula_constant(count * 11 + 10, 0) = 0.0;
+      //_nonequal_formula_matrix.block<1, 15>(count * 11 + 10, 15 * index) =
+      -f_coefficient(0.0);
+      //_nonequal_formula_constant(count * 11 + 10, 0) = 0.0;
       count++;
     }
   }
+  /*
+   _nonequal_formula_matrix = Eigen::MatrixXd::Zero(1, 15 * _node_size);
+   _nonequal_formula_constant = Eigen::VectorXd::Zero(1);
+   _nonequal_formula_matrix.block<1, 15>(0, 15) =
+       f_jacobian_coefficient(0.1).transpose();
+   _nonequal_formula_constant(0, 0) = -0.2;
+   */
 }
 void ColorTransform::GenerateFixedFormula() {
   std::vector<size_t> index_vec = _interface->GetIndex();
